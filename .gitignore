@@ -1,0 +1,8 @@
+node_modules/
+client/dist/
+server/wwwroot/
+bin/
+obj/
+*.user
+.env
+*.tsbuildinfo

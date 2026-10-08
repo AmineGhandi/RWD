@@ -1,0 +1,12 @@
+**/.git
+**/.gitignore
+**/node_modules
+**/dist
+**/bin
+**/obj
+**/.vs
+**/.vscode
+tests/
+scratch/
+.system_generated/
+*.log

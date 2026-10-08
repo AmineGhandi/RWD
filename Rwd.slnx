@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="server/Rwd.Server.csproj" />
+  <Project Path="tests/Rwd.Tests.csproj" />
+</Solution>
