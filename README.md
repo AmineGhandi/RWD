@@ -1,4 +1,4 @@
-# rb7a wla db7a — playable milestone 1
+# rb7a wla db7a - playable milestone 1
 
 A host-led quiz game with a React + TypeScript interface and an ASP.NET Core .NET 10 / SignalR server. This version implements one complete multiplayer game loop from the RWD Figma designs: room creation, QR joining, editable categories and clues, first-buzz arbitration, judging, answer reveal, scores and final standings.
 
@@ -89,7 +89,7 @@ The dependency-free .NET test runner checks authorization, private answers, 100 
 - `server/DemoBoard.cs`: editable sample questions.
 - `tests/Program.cs`: meaningful domain checks without third-party test packages.
 
-## Scope and next milestone
+## Scope
 
 Rooms and edits are **in memory**: restarting the server clears them. This milestone supports up to 16 players per room and rejects new players after a game starts; existing players can reconnect. Answers are sent only to the host until a reveal, and future question text remains private to the host. Scores and buzzer decisions are server-owned; credentials are never included in public state.
 
