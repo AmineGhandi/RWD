@@ -1481,7 +1481,7 @@ function Display({ room }: { room: Room }) {
           </>
         ) : room.phase === "wager_setup" ? (
           <div className="display-wager-suspense">
-            <Pill tone="amber">BET WLA DB7A</Pill>
+            <Pill tone="amber">JBTI DB7A</Pill>
             <h1 className="display-wager-title">
               {room.wager?.playerName ?? "Participant"}
             </h1>
@@ -1495,7 +1495,7 @@ function Display({ room }: { room: Room }) {
             <div className="stage-metadata">
               {room.wager && room.wager.locked ? (
                 <div className="wager-active-pill-row">
-                  <Pill tone="amber">BET WLA DB7A · {room.wager.playerName}</Pill>
+                  <Pill tone="amber">JBTI DB7A · {room.wager.playerName}</Pill>
                   <Pill tone="mint">STAKE: {score(room.wager.amount)} PTS</Pill>
                   <Pill>
                     {room.categories
@@ -1623,7 +1623,7 @@ function Phone({
         </section>
       ) : room.phase === "wager_setup" ? (
         <section className="panel wager-suspense-panel">
-          <Pill tone="amber">BET WLA DB7A</Pill>
+          <Pill tone="amber">JBTI DB7A</Pill>
           <h1 className="wager-target-name">
             {room.wager?.playerName ?? "Participant"}
           </h1>
@@ -1642,7 +1642,7 @@ function Phone({
             <p className="eyebrow">
               {isWagerRound ? (
                 <>
-                  BET WLA DB7A · {score(room.wager!.amount)} PTS ·{" "}
+                  JBTI DB7A · {score(room.wager!.amount)} PTS ·{" "}
                   {room.categories
                     .find((c) => c.id === q.categoryId)
                     ?.name.toUpperCase()}
