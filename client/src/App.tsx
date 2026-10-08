@@ -177,7 +177,7 @@ export function App() {
         await fetch(`/api/rooms/${encodeURIComponent(session.code)}`, {
           method: "DELETE",
           headers: { "X-Host-Token": session.token },
-        }).catch(() => {});
+        }).catch(() => { });
       }
       sessionStorage.removeItem(`rwd-host-${session.code}`);
       history.pushState(null, "", "/");
@@ -288,7 +288,7 @@ export function App() {
   const room = game.room;
   const connected = game.connection === "connected";
   const command = (action: Action) => {
-    void game.act(action).catch(() => {});
+    void game.act(action).catch(() => { });
   };
   if (!room)
     return (
@@ -416,7 +416,7 @@ function JoinDetails({ room }: { room: Room }) {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
               })
-              .catch(() => {});
+              .catch(() => { });
           }}
         >
           {copied ? "Copied!" : "Copy join link"}
@@ -458,7 +458,8 @@ function Host({
 
   const question = room.questions.find((q) => q.id === room.questionId);
   const winner = room.players.find((p) => p.id === room.winnerId);
-  const active = !["lobby", "board", "finished"].includes(room.phase);
+  const active = !["lobby", "board", "finished", "wager_setup"].includes(room.phase);
+  const wagerSetup = room.phase === "wager_setup";
   return (
     <>
       <div className="page-heading">
@@ -468,16 +469,20 @@ function Host({
               ? "Get the gang together."
               : room.phase === "finished"
                 ? "That’s a wrap."
-                : active
-                  ? "You’re in control."
-                  : "Your board. Your rules."}
+                : wagerSetup
+                  ? "Wager in progress."
+                  : active
+                    ? "You’re in control."
+                    : "Your board. Your rules."}
           </h1>
           <p className="muted">
             {room.phase === "lobby"
               ? "Share the code. Edit your board. Start when everyone’s here."
-              : active
-                ? "Read the question, open the buzzers, then judge the answer."
-                : "Click a tile to show the question. Click a category to rename it."}
+              : wagerSetup
+                ? "Set the wager with the chosen participant, then reveal the clue."
+                : active
+                  ? "Read the question, open the buzzers, then judge the answer."
+                  : "Click a tile to show the question. Click a category to rename it."}
           </p>
         </div>
         <a
@@ -581,14 +586,30 @@ function Host({
             {active && question ? (
               <div className="panel question-panel">
                 <div className="question-top">
-                  <Pill tone="lavender">
-                    {
-                      room.categories.find((c) => c.id === question.categoryId)
-                        ?.name
-                    }{" "}
-                    · {question.value}
-                  </Pill>
-                  {room.phase === "reading" && (
+                  {room.wager && room.wager.locked ? (
+                    <div className="wager-active-pill-row">
+                      <Pill tone="amber">JBTI RB7A</Pill>
+                      <Pill tone="mint">STAKE: {score(room.wager.amount)} PTS</Pill>
+                      <Pill tone="lavender">
+                        {
+                          room.categories.find(
+                            (c) => c.id === question.categoryId,
+                          )?.name
+                        }{" "}
+                        · {room.wager.playerName}
+                      </Pill>
+                    </div>
+                  ) : (
+                    <Pill tone="lavender">
+                      {
+                        room.categories.find(
+                          (c) => c.id === question.categoryId,
+                        )?.name
+                      }{" "}
+                      · {question.value}
+                    </Pill>
+                  )}
+                  {room.phase === "reading" && !room.wager && (
                     <button
                       className="quiet"
                       onClick={() => setEditing(question)}
@@ -621,9 +642,9 @@ function Host({
                       </b>
                       <span>
                         {room.phase === "wrong"
-                          ? `−${question.value}`
+                          ? `−${score(room.wager ? room.wager.amount : question.value)}`
                           : room.phase === "resolved"
-                            ? `+${question.value}`
+                            ? `+${score(room.wager ? room.wager.amount : question.value)}`
                             : "has the floor"}
                       </span>
                     </div>
@@ -634,29 +655,61 @@ function Host({
                       className="success"
                       onClick={() => command({ kind: "judge", correct: true })}
                     >
-                      Correct +{question.value}
+                      Correct +{score(room.wager ? room.wager.amount : question.value)}
                     </button>
                     <button
                       className="danger"
                       onClick={() => command({ kind: "judge", correct: false })}
                     >
-                      Wrong −{question.value}
+                      Wrong −{score(room.wager ? room.wager.amount : question.value)}
                     </button>
                   </div>
                 )}
-                {["reading", "wrong", "expired"].includes(room.phase) && (
-                  <button
-                    className="primary"
-                    onClick={() => command({ kind: "open" })}
-                  >
-                    {room.phase === "reading"
-                      ? "Enable buzzers"
-                      : "Reopen buzzers"}
-                  </button>
+                {room.wager && room.wager.locked ? (
+                  room.phase === "reading" ? (
+                    <div className="actions">
+                      <button
+                        className="primary"
+                        onClick={() => command({ kind: "open" })}
+                      >
+                        Enable buzzer for {room.wager.playerName}
+                      </button>
+                      <button
+                        className="secondary"
+                        onClick={() => command({ kind: "floor" })}
+                      >
+                        Give floor to {room.wager.playerName}
+                      </button>
+                    </div>
+                  ) : room.phase === "wrong" ? (
+                    <div className="note">
+                      Wager round concluded: wrong answer (−{score(room.wager.amount)} pts). Other players cannot steal this question.
+                    </div>
+                  ) : room.phase === "expired" ? (
+                    <button
+                      className="primary"
+                      onClick={() => command({ kind: "open" })}
+                    >
+                      Reopen buzzer for {room.wager.playerName}
+                    </button>
+                  ) : null
+                ) : (
+                  ["reading", "wrong", "expired"].includes(room.phase) && (
+                    <button
+                      className="primary"
+                      onClick={() => command({ kind: "open" })}
+                    >
+                      {room.phase === "reading"
+                        ? "Enable buzzers"
+                        : "Reopen buzzers"}
+                    </button>
+                  )
                 )}
                 {room.phase === "open" && (
                   <div className="note">
-                    Buzzers are open. Waiting for the first valid buzz…
+                    {room.wager
+                      ? `Buzzers are open for ${room.wager.playerName}. Waiting for buzz…`
+                      : "Buzzers are open. Waiting for the first valid buzz…"}
                   </div>
                 )}
                 {room.phase === "expired" && (
@@ -713,6 +766,27 @@ function Host({
               <Pill tone={room.phase === "open" ? "amber" : "lavender"}>
                 {phaseLabel(room.phase)}
               </Pill>
+              <button
+                id="bet-wla-db7a-btn"
+                type="button"
+                className="primary full wager-launch-btn"
+                disabled={
+                  active ||
+                  room.phase !== "board" ||
+                  room.questions.every((q) => q.played) ||
+                  room.players.length === 0
+                }
+                onClick={() => command({ kind: "wager_init" })}
+                title={
+                  room.questions.every((q) => q.played)
+                    ? "No unused questions remaining on the active board"
+                    : active
+                      ? "Cannot launch wager while a question is active"
+                      : "Launch  wager round"
+                }
+              >
+                JBTI RB7A
+              </button>
               {room.deadline && (
                 <div className="large-timer">
                   <Timer deadline={room.deadline} serverNow={room.serverNow} />
@@ -730,6 +804,18 @@ function Host({
             </aside>
           )}
         </div>
+      )}
+      {wagerSetup && (
+        <WagerSetupModal
+          room={room}
+          onClose={() => command({ kind: "wager_cancel" })}
+          onLock={async (playerId, wagerAmount) => {
+            await act({ kind: "wager_lock", playerId, wagerAmount });
+          }}
+          onPlayerChange={async (playerId) => {
+            await act({ kind: "wager_player", playerId });
+          }}
+        />
       )}
       {editing && (
         <Editor
@@ -1069,12 +1155,174 @@ function ImportModal({
   );
 }
 
+function WagerSetupModal({
+  room,
+  onClose,
+  onLock,
+  onPlayerChange,
+}: {
+  room: Room;
+  onClose: () => void;
+  onLock: (playerId: string, wagerAmount: number) => Promise<void>;
+  onPlayerChange: (playerId: string) => Promise<void>;
+}) {
+  const defaultPlayer =
+    room.players.find((p) => p.id === room.wager?.playerId) ??
+    room.players.find((p) => p.connected) ??
+    room.players[0];
+  const [selectedPlayerId, setSelectedPlayerId] = useState(
+    defaultPlayer?.id ?? "",
+  );
+  const [wagerInput, setWagerInput] = useState("");
+  const [locking, setLocking] = useState(false);
+  const [error, setError] = useState("");
+  const dialog = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    dialog.current?.showModal();
+    return () => dialog.current?.close();
+  }, []);
+
+  const selectedPlayer =
+    room.players.find((p) => p.id === selectedPlayerId) ?? defaultPlayer;
+
+  const handlePlayerChange = async (newId: string) => {
+    setSelectedPlayerId(newId);
+    setError("");
+    try {
+      await onPlayerChange(newId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleLock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!selectedPlayer) {
+      setError("Please select a participant.");
+      return;
+    }
+    const trimmed = wagerInput.trim();
+    if (!trimmed) {
+      setError("Enter a wager amount.");
+      return;
+    }
+    if (trimmed.includes(".") || trimmed.includes(",")) {
+      setError("Wager must be a whole number (no decimals).");
+      return;
+    }
+    const num = Number(trimmed);
+    if (!Number.isInteger(num) || isNaN(num) || num <= 0) {
+      setError("Wager must be a positive whole number greater than 0.");
+      return;
+    }
+    setLocking(true);
+    try {
+      await onLock(selectedPlayer.id, num);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to lock wager.");
+      setLocking(false);
+    }
+  };
+
+  return (
+    <dialog
+      ref={dialog}
+      className="panel editor wager-modal"
+      aria-labelledby="wager-modal-title"
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!locking) onClose();
+      }}
+    >
+      <div className="wager-modal-header">
+        <div>
+          <h2 id="wager-modal-title">JBTI RB7A Setup</h2>
+          <p className="muted">
+            A random unused question is reserved. Enter the participant's approved wager.
+          </p>
+        </div>
+        <Pill tone="amber">QUESTION RESERVED</Pill>
+      </div>
+
+      <form onSubmit={handleLock}>
+        <label>
+          Participant
+          <select
+            value={selectedPlayerId}
+            onChange={(e) => void handlePlayerChange(e.target.value)}
+            disabled={locking}
+          >
+            {room.players.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} {p.connected ? "(Connected)" : "(Offline)"} · {score(p.score)} pts
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {selectedPlayer && (
+          <div className="wager-score-preview">
+            <span>
+              Current score for <b>{selectedPlayer.name}</b>:
+            </span>
+            <strong>{score(selectedPlayer.score)} pts</strong>
+          </div>
+        )}
+
+        <label>
+          Wager amount (Points at stake)
+          <input
+            type="number"
+            step="1"
+            min="1"
+            placeholder="Enter points to wager (e.g. 500)"
+            value={wagerInput}
+            onChange={(e) => {
+              setWagerInput(e.target.value);
+              setError("");
+            }}
+            disabled={locking}
+            autoFocus
+            required
+          />
+          <small className="muted">
+            Positive whole numbers only. Correct adds this amount; wrong subtracts it.
+          </small>
+        </label>
+
+        {error && (
+          <div className="error-banner" role="alert">
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="modal-actions">
+          <button
+            className="secondary"
+            type="button"
+            disabled={locking}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button className="primary" type="submit" disabled={locking}>
+            {locking ? "Locking & Revealing..." : "Lock wager & reveal →"}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
 function phaseLabel(phase: string) {
   return (
     (
       {
         lobby: "Waiting room",
         board: "Choose a question",
+        wager_setup: "JBTI RB7A",
         reading: "Buzzers locked",
         open: "Buzzers open",
         answering: "Answer in progress",
@@ -1125,15 +1373,38 @@ function Display({ room }: { room: Room }) {
             <h1>Final scores</h1>
             <Leaderboard players={room.players} />
           </>
+        ) : room.phase === "wager_setup" ? (
+          <div className="display-wager-suspense">
+            <Pill tone="amber">BET WLA DB7A</Pill>
+            <h1 className="display-wager-title">
+              {room.wager?.playerName ?? "Participant"}
+            </h1>
+            <div className="display-status active">
+              <h2>Wager being placed…</h2>
+              <p>The host and participant are agreeing on the points at stake.</p>
+            </div>
+          </div>
         ) : q ? (
           <>
             <div className="stage-metadata">
-              <Pill>
-                {room.categories
-                  .find((c) => c.id === q.categoryId)
-                  ?.name.toUpperCase()}{" "}
-                · {q.value}
-              </Pill>
+              {room.wager && room.wager.locked ? (
+                <div className="wager-active-pill-row">
+                  <Pill tone="amber">BET WLA DB7A · {room.wager.playerName}</Pill>
+                  <Pill tone="mint">STAKE: {score(room.wager.amount)} PTS</Pill>
+                  <Pill>
+                    {room.categories
+                      .find((c) => c.id === q.categoryId)
+                      ?.name.toUpperCase()}
+                  </Pill>
+                </div>
+              ) : (
+                <Pill>
+                  {room.categories
+                    .find((c) => c.id === q.categoryId)
+                    ?.name.toUpperCase()}{" "}
+                  · {q.value}
+                </Pill>
+              )}
               <Pill>
                 {room.deadline ? (
                   <Timer deadline={room.deadline} serverNow={room.serverNow} />
@@ -1151,19 +1422,38 @@ function Display({ room }: { room: Room }) {
                 {room.phase === "revealed"
                   ? q.answer
                   : winner
-                    ? `${winner.name} ${room.phase === "wrong" ? "got it wrong" : room.phase === "resolved" ? "got it right!" : "has the floor"}`
-                    : phaseLabel(room.phase).toUpperCase()}
+                    ? `${winner.name} ${room.phase === "wrong"
+                      ? room.wager
+                        ? `lost ${score(room.wager.amount)} pts!`
+                        : "got it wrong"
+                      : room.phase === "resolved"
+                        ? room.wager
+                          ? `won ${score(room.wager.amount)} pts!`
+                          : "got it right!"
+                        : "has the floor"
+                    }`
+                    : room.wager && room.wager.locked
+                      ? `${room.wager.playerName}’s Turn · ${score(room.wager.amount)} pts at stake`
+                      : phaseLabel(room.phase).toUpperCase()}
               </h2>
               <p>
                 {room.phase === "open"
-                  ? "Know it? Hit the buzzer on your phone."
+                  ? room.wager
+                    ? `Buzzer open for ${room.wager.playerName}.`
+                    : "Know it? Hit the buzzer on your phone."
                   : room.phase === "reading"
-                    ? "Read the question. Wait for the host to open the buzzers."
-                    : room.phase === "revealed"
-                      ? "Answer revealed"
-                      : room.phase === "expired"
-                        ? "Waiting for the host."
-                        : "First valid buzz takes the floor."}
+                    ? room.wager
+                      ? `Only ${room.wager.playerName} can answer this question.`
+                      : "Read the question. Wait for the host to open the buzzers."
+                    : room.phase === "wrong"
+                      ? room.wager
+                        ? "Wager lost. Other players cannot steal."
+                        : "The host can reopen the buzzers."
+                      : room.phase === "revealed"
+                        ? "Answer revealed"
+                        : room.phase === "expired"
+                          ? "Waiting for the host."
+                          : "First valid buzz takes the floor."}
               </p>
             </div>
           </>
@@ -1193,7 +1483,12 @@ function Phone({
   const winner = room.players.find((p) => p.id === room.winnerId);
   const q = room.questions.find((q) => q.id === room.questionId);
   const [pending, setPending] = useState(false);
-  const ready = connected && room.phase === "open";
+
+  const isWagerRound = room.wager !== null && room.wager.locked;
+  const isWagerTarget = isWagerRound && room.wager?.playerId === playerId;
+  const isWagerLockedOut = isWagerRound && !isWagerTarget;
+
+  const ready = connected && room.phase === "open" && !isWagerLockedOut;
   const won =
     room.winnerId === playerId &&
     ["answering", "resolved"].includes(room.phase);
@@ -1220,14 +1515,40 @@ function Phone({
           <h1>Final scores</h1>
           <Leaderboard players={room.players} />
         </section>
+      ) : room.phase === "wager_setup" ? (
+        <section className="panel wager-suspense-panel">
+          <Pill tone="amber">BET WLA DB7A</Pill>
+          <h1 className="wager-target-name">
+            {room.wager?.playerName ?? "Participant"}
+          </h1>
+          <p className="wager-status-text">Wager being placed…</p>
+          <div className="wager-suspense-indicator">
+            <div className="pulse-dot" />
+            <span>Waiting for host to lock the wager</span>
+          </div>
+          <p className="muted center">
+            The question and buzzer will appear once the wager is locked.
+          </p>
+        </section>
       ) : q ? (
         <>
           <section className="panel phone-question">
             <p className="eyebrow">
-              {room.categories
-                .find((c) => c.id === q.categoryId)
-                ?.name.toUpperCase()}{" "}
-              · {q.value}
+              {isWagerRound ? (
+                <>
+                  BET WLA DB7A · {score(room.wager!.amount)} PTS ·{" "}
+                  {room.categories
+                    .find((c) => c.id === q.categoryId)
+                    ?.name.toUpperCase()}
+                </>
+              ) : (
+                <>
+                  {room.categories
+                    .find((c) => c.id === q.categoryId)
+                    ?.name.toUpperCase()}{" "}
+                  · {q.value}
+                </>
+              )}
             </p>
             <p>{q.text}</p>
           </section>
@@ -1237,6 +1558,25 @@ function Phone({
               <h2>{q.answer}</h2>
               <p className="muted">Waiting for the next question.</p>
             </section>
+          ) : isWagerLockedOut ? (
+            <>
+              <div className="buzzer-area">
+                <button
+                  className="buzzer locked"
+                  disabled
+                  aria-label="Wager round in progress"
+                >
+                  <strong>LOCKED</strong>
+                  <span>Only {room.wager?.playerName} can answer</span>
+                </button>
+              </div>
+              <div className="phone-status" aria-live="polite">
+                <b>BET WLA DB7A IN PROGRESS</b>
+                <p className="muted">
+                  Only {room.wager?.playerName} can answer this round. Other players cannot steal.
+                </p>
+              </div>
+            </>
           ) : (
             <>
               <div className="buzzer-area">
@@ -1262,7 +1602,9 @@ function Phone({
                   </strong>
                   <span>
                     {ready
-                      ? "Tap when you know it"
+                      ? isWagerRound
+                        ? `Tap to answer for ${score(room.wager!.amount)} pts`
+                        : "Tap when you know it"
                       : won
                         ? "You have the floor"
                         : beaten
@@ -1275,15 +1617,21 @@ function Phone({
                 <b>
                   {won
                     ? "YOU BUZZED FIRST"
-                    : phaseLabel(room.phase).toUpperCase()}
+                    : isWagerRound
+                      ? `${room.wager!.playerName}’S TURN`
+                      : phaseLabel(room.phase).toUpperCase()}
                 </b>
                 <p className="muted">
                   {ready
-                    ? "First valid buzz takes the floor."
+                    ? "Tap the buzzer when ready."
                     : room.phase === "wrong"
-                      ? "The host can reopen the buzzers."
+                      ? isWagerRound
+                        ? `Wrong answer (−${score(room.wager!.amount)} pts).`
+                        : "The host can reopen the buzzers."
                       : room.phase === "resolved"
-                        ? "Waiting for the answer reveal."
+                        ? isWagerRound
+                          ? `Correct answer (+${score(room.wager!.amount)} pts)!`
+                          : "Waiting for the answer reveal."
                         : "Keep your phone connected."}
                 </p>
               </div>

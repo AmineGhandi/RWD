@@ -19,6 +19,12 @@ export type Question = {
   text: string | null;
   answer: string | null;
 };
+export type Wager = {
+  playerId: string | null;
+  playerName: string | null;
+  amount: number;
+  locked: boolean;
+};
 export type Room = {
   code: string;
   serverNow: string;
@@ -34,6 +40,7 @@ export type Room = {
   questions: Question[];
   players: Player[];
   isHost: boolean;
+  wager: Wager | null;
 };
 export type Action = {
   kind: string;
@@ -54,5 +61,7 @@ export type Action = {
       answer: string;
     }[];
   };
+  playerId?: string;
+  wagerAmount?: number;
 };
 

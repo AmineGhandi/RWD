@@ -124,8 +124,53 @@ try {
   await act("board");
   assert.ok(host.state.questions.find((q) => q.id === "q0-0").played);
   assert.ok(tv.state.questions.every((q) => q.answer === null));
+
+  // --- Live (Wager round) flow ---
+  await act("wager_init");
+  await wait(() => host.state.phase === "wager_setup");
+  assert.equal(pa.state.phase, "wager_setup");
+  assert.equal(tv.state.phase, "wager_setup");
+  const reservedQ = host.state.questionId;
+  assert.ok(reservedQ);
+  assert.equal(pa.state.questions.find((q) => q.id === reservedQ).text, null);
+  assert.equal(tv.state.questions.find((q) => q.id === reservedQ).text, null);
+
+  // Switch player and lock wager
+  await act("wager_player", { playerId: b.playerId });
+  await wait(() => host.state.wager?.playerId === b.playerId);
+  assert.equal(pa.state.wager.playerId, b.playerId);
+  await act("wager_lock", { playerId: b.playerId, wagerAmount: 500 });
+  await wait(() => host.state.phase === "reading");
+  assert.equal(pa.state.wager.locked, true);
+  assert.equal(pa.state.wager.amount, 500);
+  assert.ok(pa.state.questions.find((q) => q.id === reservedQ).text !== null);
+
+  // Open buzzer - only B can buzz
+  await act("open");
+  assert.equal(
+    await pa.hub.invoke("Buzz", h.code, host.state.roundId),
+    false,
+  );
+  assert.equal(
+    await pb.hub.invoke("Buzz", h.code, host.state.roundId),
+    true,
+  );
+  await wait(() => host.state.phase === "answering");
+  const bScoreBefore = pb.state.players.find((p) => p.id === b.playerId).score;
+  await act("judge", { correct: true });
+  await wait(() => host.state.phase === "resolved");
+  assert.equal(
+    pb.state.players.find((p) => p.id === b.playerId).score,
+    bScoreBefore + 500,
+  );
+  await act("reveal");
+  await act("board");
+  assert.equal(host.state.phase, "board");
+  assert.equal(host.state.wager, null);
+  assert.ok(host.state.questions.find((q) => q.id === reservedQ).played);
+
   console.log(
-    "PASS: live HTTP + SignalR host / two players / display, authorization, race, wrong lockout, duplicate judgement, private answer, score sync and reconnect.",
+    "PASS: live HTTP + SignalR host / two players / display, JBTI RB7A wager round, authorization, race, wrong lockout, duplicate judgement, private answer, score sync and reconnect.",
   );
 } finally {
   await Promise.all(sessions.map((s) => s.hub.stop()));

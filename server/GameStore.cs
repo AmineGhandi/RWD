@@ -7,14 +7,16 @@ public record Attachment(string Role, string? PlayerId);
 public record PlayerView(string Id, string Name, int Score, bool Connected);
 public record QuestionView(string Id, string CategoryId, int Value, bool Played, string? Text, string? Answer);
 public record CategoryView(string Id, string Name);
-public record RoomView(string Code, DateTimeOffset ServerNow, long Revision, string Phase, string? QuestionId, string RoundId, string? WinnerId, string? AttemptId, string[] FailedIds, DateTimeOffset? Deadline, CategoryView[] Categories, QuestionView[] Questions, PlayerView[] Players, bool IsHost);
+public record WagerView(string? PlayerId, string? PlayerName, int Amount, bool Locked);
+public record RoomView(string Code, DateTimeOffset ServerNow, long Revision, string Phase, string? QuestionId, string RoundId, string? WinnerId, string? AttemptId, string[] FailedIds, DateTimeOffset? Deadline, CategoryView[] Categories, QuestionView[] Questions, PlayerView[] Players, bool IsHost, WagerView? Wager);
 public record QuestionEdit(string QuestionId, string Text, string Answer);
 public record ImportedCategory(string Id, string Name);
 public record ImportedQuestion(string Id, string CategoryId, int Value, string Text, string Answer);
 public record BoardImport(List<ImportedCategory> Categories, List<ImportedQuestion> Questions);
-public record HostAction(string Kind, string? QuestionId = null, string? RoundId = null, string? AttemptId = null, bool? Correct = null, string? CategoryId = null, string? Name = null, QuestionEdit? Edit = null, BoardImport? Board = null);
+public record HostAction(string Kind, string? QuestionId = null, string? RoundId = null, string? AttemptId = null, bool? Correct = null, string? CategoryId = null, string? Name = null, QuestionEdit? Edit = null, BoardImport? Board = null, string? PlayerId = null, int? WagerAmount = null);
 public class Player(string id, string name, string token) { public string Id = id; public string Name = name; public string Token = token; public int Score; }
 public class Question(string id, string categoryId, int value, string text, string answer) { public string Id = id; public string CategoryId = categoryId; public int Value = value; public string Text = text; public string Answer = answer; public bool Played; }
+public class WagerState(string? playerId, int amount, bool locked) { public string? PlayerId = playerId; public int Amount = amount; public bool Locked = locked; }
 public class Room(string code, string hostToken)
 {
     public readonly object Gate = new();
@@ -28,6 +30,7 @@ public class Room(string code, string hostToken)
     public List<Question> Questions = [];
     public Dictionary<string, Attachment> Connections = [];
     public (string PlayerId, int Delta)? LastJudgement;
+    public WagerState? Wager;
 }
 public class GameStore
 {
@@ -85,9 +88,19 @@ public class GameStore
     }
     public RoomView View(Room room, bool host)
     {
-        lock (room.Gate) return new(room.Code, DateTimeOffset.UtcNow, room.Revision, room.Phase, room.QuestionId, room.RoundId, room.WinnerId, room.AttemptId, room.FailedIds.ToArray(), room.Deadline,
-            room.Categories.ToArray(), room.Questions.Select(q => new QuestionView(q.Id, q.CategoryId, q.Value, q.Played, host || q.Id == room.QuestionId ? q.Text : null, host || (q.Id == room.QuestionId && room.Phase == "revealed") ? q.Answer : null)).ToArray(),
-            room.Players.Select(p => new PlayerView(p.Id, p.Name, p.Score, room.Connections.Values.Any(c => c.PlayerId == p.Id))).ToArray(), host);
+        lock (room.Gate) {
+            var wagerView = room.Wager is null ? null : new WagerView(
+                room.Wager.PlayerId,
+                room.Players.FirstOrDefault(p => p.Id == room.Wager.PlayerId)?.Name,
+                room.Wager.Amount,
+                room.Wager.Locked
+            );
+            return new(room.Code, DateTimeOffset.UtcNow, room.Revision, room.Phase, room.QuestionId, room.RoundId, room.WinnerId, room.AttemptId, room.FailedIds.ToArray(), room.Deadline,
+                room.Categories.ToArray(), room.Questions.Select(q => new QuestionView(q.Id, q.CategoryId, q.Value, q.Played,
+                    room.Phase == "wager_setup" ? null : (host || q.Id == room.QuestionId ? q.Text : null),
+                    room.Phase == "wager_setup" ? null : (host || (q.Id == room.QuestionId && room.Phase == "revealed") ? q.Answer : null))).ToArray(),
+                room.Players.Select(p => new PlayerView(p.Id, p.Name, p.Score, room.Connections.Values.Any(c => c.PlayerId == p.Id))).ToArray(), host, wagerView);
+        }
     }
     public void Act(Room room, string connectionId, HostAction action)
     {
@@ -112,6 +125,7 @@ public class GameStore
                     room.LastJudgement = null;
                     room.Deadline = null;
                     room.RoundId = "";
+                    room.Wager = null;
                     foreach (var question in room.Questions) question.Played = false;
                     foreach (var player in room.Players) player.Score = 0;
                     break;
@@ -119,7 +133,46 @@ public class GameStore
                     Require(room.Phase == "board", "Return to the board before choosing a question.");
                     q = room.Questions.FirstOrDefault(q => q.Id == action.QuestionId) ?? throw new GameException("Question not found.");
                     Require(!q.Played, "That question has already been played.");
-                    room.QuestionId = q.Id; room.RoundId = Token(); room.Phase = "reading"; room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.LastJudgement = null; room.Deadline = null; break;
+                    room.QuestionId = q.Id; room.RoundId = Token(); room.Phase = "reading"; room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.LastJudgement = null; room.Deadline = null; room.Wager = null; break;
+                case "wager_init":
+                    Require(room.Phase == "board", "Return to the board before starting a wager round.");
+                    Require(room.Players.Count > 0, "Wait for players to join before starting a wager round.");
+                    var unplayed = room.Questions.Where(q => !q.Played).ToList();
+                    Require(unplayed.Count > 0, "No unused questions remaining on the board.");
+                    var chosenQ = unplayed[RandomNumberGenerator.GetInt32(unplayed.Count)];
+                    var targetPlayer = (action.PlayerId != null ? room.Players.FirstOrDefault(p => p.Id == action.PlayerId) : null)
+                        ?? room.Players.FirstOrDefault(p => room.Connections.Values.Any(c => c.PlayerId == p.Id))
+                        ?? room.Players[0];
+                    room.QuestionId = chosenQ.Id;
+                    room.RoundId = Token();
+                    room.Phase = "wager_setup";
+                    room.Wager = new WagerState(targetPlayer.Id, 0, false);
+                    room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.LastJudgement = null; room.Deadline = null; break;
+                case "wager_player":
+                    Require(room.Phase == "wager_setup", "Wager participant can only be changed during setup.");
+                    Require(!string.IsNullOrEmpty(action.PlayerId) && room.Players.Any(p => p.Id == action.PlayerId), "Player not found.");
+                    room.Wager!.PlayerId = action.PlayerId; break;
+                case "wager_cancel":
+                    Require(room.Phase == "wager_setup", "No active wager setup to cancel.");
+                    room.QuestionId = null; room.Wager = null; room.Phase = "board"; break;
+                case "wager_lock":
+                    Require(room.Phase == "wager_setup", "No active wager setup to lock.");
+                    Require(!string.IsNullOrEmpty(action.PlayerId) && room.Players.Any(p => p.Id == action.PlayerId), "Choose a valid participant.");
+                    if (action.WagerAmount is not { } wagerAmount || wagerAmount <= 0) throw new GameException("Wager must be a positive whole number.");
+                    var participant = room.Players.Single(p => p.Id == action.PlayerId);
+                    room.Wager!.PlayerId = participant.Id;
+                    room.Wager.Amount = wagerAmount;
+                    room.Wager.Locked = true;
+                    room.RoundId = Token();
+                    room.Phase = "reading";
+                    room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.LastJudgement = null; room.Deadline = null; break;
+                case "floor":
+                    Require(room.Phase is "reading" or "open" or "expired", "Cannot give floor now.");
+                    Require(room.Wager is not null, "Only available in a wager round.");
+                    room.WinnerId = room.Wager!.PlayerId;
+                    room.AttemptId = Token();
+                    room.Phase = "answering";
+                    room.Deadline = null; break;
                 case "open":
                     Require(room.Phase is "reading" or "wrong" or "expired", "Buzzers cannot open now.");
                     Require(room.Players.Any(p => room.Connections.Values.Any(c => c.PlayerId == p.Id)), "No connected players. Reveal or skip the question.");
@@ -127,10 +180,11 @@ public class GameStore
                 case "judge":
                     Require(room.Phase == "answering" && room.AttemptId == action.AttemptId && action.Correct.HasValue, "That answer has already been judged.");
                     var winner = room.Players.Single(p => p.Id == room.WinnerId);
-                    int delta = action.Correct == true ? q!.Value : -q!.Value;
+                    int pointValue = room.Wager is not null ? room.Wager.Amount : q!.Value;
+                    int delta = action.Correct == true ? pointValue : -pointValue;
                     winner.Score += delta; room.LastJudgement = (winner.Id, delta);
                     if (action.Correct == true) { q!.Played = true; room.Phase = "resolved"; }
-                    else { room.Phase = "wrong"; }
+                    else { if (room.Wager is not null) q!.Played = true; room.Phase = "wrong"; }
                     break;
                 case "undo":
                     Require(room.Phase is "wrong" or "resolved" && room.LastJudgement.HasValue, "There is no judgement to undo.");
@@ -143,7 +197,7 @@ public class GameStore
                 case "board":
                     Require(room.Phase == "revealed", "Reveal the answer before returning to the board.");
                     room.Phase = room.Questions.All(q => q.Played) ? "finished" : "board";
-                    room.QuestionId = null; room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); break;
+                    room.QuestionId = null; room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.Wager = null; break;
                 case "category":
                     Require(room.Phase is "lobby" or "board", "Rename categories from the board.");
                     var index = room.Categories.FindIndex(c => c.Id == action.CategoryId);
@@ -194,6 +248,7 @@ public class GameStore
             Require(attachment?.Role == "player", "Join as a player to buzz.");
             if (room.RoundId != roundId || room.Phase != "open") return false;
             if (room.Deadline <= DateTimeOffset.UtcNow) { room.Phase = "expired"; room.Deadline = null; room.Revision++; return false; }
+            if (room.Wager is not null && attachment!.PlayerId != room.Wager.PlayerId) return false;
             room.WinnerId = attachment!.PlayerId; room.AttemptId = Token(); room.Phase = "answering"; room.Deadline = null; room.Revision++; return true;
         }
     }

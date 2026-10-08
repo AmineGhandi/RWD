@@ -71,6 +71,74 @@ var importedView = store.View(room, true);
 Check(importedView.Categories.Length == 2 && importedView.Categories[0].Name == "Custom Cat 1", "board import replaces categories");
 Check(importedView.Questions.Length == 2 && importedView.Questions[0].Text == "Imported Q1", "board import replaces questions");
 
+// --- JBTI RB7A (Wager round) tests ---
+Act("start"); // Move to board
+// 1. Initiate wager round
+store.Act(room, "host", new("wager_init"));
+var wagerSetupView = store.View(room, false);
+Check(room.Phase == "wager_setup", "wager_init transitions to wager_setup");
+Check(wagerSetupView.Wager is not null && !wagerSetupView.Wager.Locked, "wager state exists and is unlocked in setup");
+Check(room.QuestionId != null, "wager_init selects and reserves a question");
+var reservedQId = room.QuestionId!;
+Check(wagerSetupView.Questions.Single(q => q.Id == reservedQId).Text == null, "reserved question text is hidden from players during wager_setup");
+Check(store.View(room, true).Questions.Single(q => q.Id == reservedQId).Text == null, "reserved question text is hidden from host during wager_setup");
+
+// 2. Cancellation releases the reserved question without marking it played
+store.Act(room, "host", new("wager_cancel"));
+Check(room.Phase == "board" && room.QuestionId == null && room.Wager == null, "wager_cancel returns to board and clears wager");
+Check(!store.View(room, false).Questions.Single(q => q.Id == reservedQId).Played, "cancelled question remains unplayed");
+
+// 3. Re-initiate and test input validation
+store.Act(room, "host", new("wager_init", PlayerId: a.PlayerId));
+var activeReservedQId = room.QuestionId!;
+Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: a.PlayerId, WagerAmount: 0)), "rejects 0 wager");
+Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: a.PlayerId, WagerAmount: -50)), "rejects negative wager");
+Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: "nonexistent", WagerAmount: 500)), "rejects invalid player id");
+Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: a.PlayerId)), "rejects missing wager amount");
+
+// Switch participant in setup
+store.Act(room, "host", new("wager_player", PlayerId: b.PlayerId));
+Check(store.View(room, false).Wager!.PlayerId == b.PlayerId, "wager_player updates selected participant");
+
+// Lock wager with valid amount (e.g. 750)
+store.Act(room, "host", new("wager_lock", PlayerId: b.PlayerId, WagerAmount: 750));
+var lockedView = store.View(room, false);
+Check(room.Phase == "reading", "wager_lock transitions to reading");
+Check(lockedView.Wager is not null && lockedView.Wager.Locked && lockedView.Wager.Amount == 750, "wager is locked with specified amount");
+Check(lockedView.Questions.Single(q => q.Id == activeReservedQId).Text != null, "question text is revealed to players once wager is locked");
+Check(lockedView.Questions.Single(q => q.Id == activeReservedQId).Answer == null, "question answer remains private once wager is locked");
+Check(room.QuestionId == activeReservedQId, "locked question matches reserved question");
+
+// 4. Other players cannot buzz during wager round
+Act("open");
+Check(!store.Buzz(room, "a-new", room.RoundId), "other player cannot buzz during wager round");
+Check(store.Buzz(room, "b", room.RoundId), "selected participant can buzz during wager round");
+Check(room.Phase == "answering" && room.WinnerId == b.PlayerId, "selected participant has floor");
+
+// 5. Duplicate judgment protection & scoring exactly once
+var wagerAttempt = room.AttemptId;
+var bScoreBefore = store.View(room, false).Players.Single(p => p.Id == b.PlayerId).Score;
+Act("judge", correct: false);
+var bScoreAfterWrong = store.View(room, false).Players.Single(p => p.Id == b.PlayerId).Score;
+Check(bScoreAfterWrong == bScoreBefore - 750, "wrong answer subtracts the wager amount (750), ignoring tile value");
+Reject(() => store.Act(room, "host", new("judge", RoundId: room.RoundId, AttemptId: wagerAttempt, Correct: false)), "duplicate click/judgement rejected in wager round");
+
+// 6. Undo judgment restores score and unmarks played
+Act("undo");
+Check(store.View(room, false).Players.Single(p => p.Id == b.PlayerId).Score == bScoreBefore, "undo restores previous score in wager round");
+Check(room.Phase == "answering", "undo returns phase to answering");
+
+// Re-judge correct
+Act("judge", correct: true);
+var bScoreAfterCorrect = store.View(room, false).Players.Single(p => p.Id == b.PlayerId).Score;
+Check(bScoreAfterCorrect == bScoreBefore + 750, "correct answer adds the wager amount (750)");
+Check(store.View(room, false).Questions.Single(q => q.Id == activeReservedQId).Played, "question is marked played after resolution");
+
+// 7. Finish round and return to board
+Act("reveal");
+Act("board");
+Check(room.Phase == "board" && room.Wager == null, "returning to board clears wager round");
+
 store.Remove(host.Code);
 Reject(() => store.Get(host.Code), "deleted room cannot be retrieved");
 Console.WriteLine($"{passed} checks passed.");
