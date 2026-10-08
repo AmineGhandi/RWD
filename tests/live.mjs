@@ -126,20 +126,27 @@ try {
   assert.ok(tv.state.questions.every((q) => q.answer === null));
 
   // --- Live (Wager round) flow ---
-  await act("wager_init");
+  await act("wager_init", { questionId: "q0-1" });
   await wait(() => host.state.phase === "wager_setup");
+  assert.equal(host.state.questionId, "q0-1");
   assert.equal(pa.state.phase, "wager_setup");
   assert.equal(tv.state.phase, "wager_setup");
-  const reservedQ = host.state.questionId;
-  assert.ok(reservedQ);
+  assert.ok(host.state.questions.find((q) => q.id === "q0-1").text !== null);
+  assert.equal(pa.state.questions.find((q) => q.id === "q0-1").text, null);
+  assert.equal(tv.state.questions.find((q) => q.id === "q0-1").text, null);
+
+  // Reassign to another question via wager_question
+  await act("wager_question", { questionId: "q1-0" });
+  await wait(() => host.state.questionId === "q1-0");
+  const reservedQ = "q1-0";
+  assert.ok(host.state.questions.find((q) => q.id === reservedQ).text !== null);
   assert.equal(pa.state.questions.find((q) => q.id === reservedQ).text, null);
-  assert.equal(tv.state.questions.find((q) => q.id === reservedQ).text, null);
 
   // Switch player and lock wager
   await act("wager_player", { playerId: b.playerId });
   await wait(() => host.state.wager?.playerId === b.playerId);
   assert.equal(pa.state.wager.playerId, b.playerId);
-  await act("wager_lock", { playerId: b.playerId, wagerAmount: 500 });
+  await act("wager_lock", { playerId: b.playerId, wagerAmount: 500, questionId: reservedQ });
   await wait(() => host.state.phase === "reading");
   assert.equal(pa.state.wager.locked, true);
   assert.equal(pa.state.wager.amount, 500);

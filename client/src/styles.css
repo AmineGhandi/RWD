@@ -1421,3 +1421,44 @@ select {
   font-weight: 700;
   color: var(--purple);
 }
+.wager-question-preview {
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+.wager-question-preview-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.wager-question-preview-text {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.wager-question-preview-answer {
+  margin: 0;
+  color: #533077;
+  font-weight: 600;
+  background: #ede6f5;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.wager-launch-inline-btn {
+  background: #fbf0d3;
+  color: #8b6414;
+  border-color: #d5ac42;
+  font-weight: 700;
+}
+.wager-launch-inline-btn:hover {
+  background: var(--amber);
+  color: var(--ink);
+}

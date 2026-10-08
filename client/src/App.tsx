@@ -695,14 +695,30 @@ function Host({
                   ) : null
                 ) : (
                   ["reading", "wrong", "expired"].includes(room.phase) && (
-                    <button
-                      className="primary"
-                      onClick={() => command({ kind: "open" })}
-                    >
-                      {room.phase === "reading"
-                        ? "Enable buzzers"
-                        : "Reopen buzzers"}
-                    </button>
+                    <div className="actions">
+                      <button
+                        className="primary"
+                        onClick={() => command({ kind: "open" })}
+                      >
+                        {room.phase === "reading"
+                          ? "Enable buzzers"
+                          : "Reopen buzzers"}
+                      </button>
+                      {room.phase === "reading" && !room.wager && (
+                        <button
+                          className="secondary wager-launch-inline-btn"
+                          onClick={() =>
+                            command({
+                              kind: "wager_init",
+                              questionId: question.id,
+                            })
+                          }
+                          title="Assign this specific question as JBTI RB7A"
+                        >
+                          JBTI RB7A
+                        </button>
+                      )}
+                    </div>
                   )
                 )}
                 {room.phase === "open" && (
@@ -809,11 +825,14 @@ function Host({
         <WagerSetupModal
           room={room}
           onClose={() => command({ kind: "wager_cancel" })}
-          onLock={async (playerId, wagerAmount) => {
-            await act({ kind: "wager_lock", playerId, wagerAmount });
+          onLock={async (playerId, wagerAmount, questionId) => {
+            await act({ kind: "wager_lock", playerId, wagerAmount, questionId });
           }}
           onPlayerChange={async (playerId) => {
             await act({ kind: "wager_player", playerId });
+          }}
+          onQuestionChange={async (questionId) => {
+            await act({ kind: "wager_question", questionId });
           }}
         />
       )}
@@ -1160,18 +1179,32 @@ function WagerSetupModal({
   onClose,
   onLock,
   onPlayerChange,
+  onQuestionChange,
 }: {
   room: Room;
   onClose: () => void;
-  onLock: (playerId: string, wagerAmount: number) => Promise<void>;
+  onLock: (
+    playerId: string,
+    wagerAmount: number,
+    questionId: string
+  ) => Promise<void>;
   onPlayerChange: (playerId: string) => Promise<void>;
+  onQuestionChange: (questionId: string) => Promise<void>;
 }) {
+  const unplayedQuestions = room.questions.filter((q) => !q.played);
+  const defaultQuestion =
+    room.questions.find((q) => q.id === room.questionId && !q.played) ??
+    unplayedQuestions[0];
+  const [selectedQuestionId, setSelectedQuestionId] = useState(
+    defaultQuestion?.id ?? ""
+  );
+
   const defaultPlayer =
     room.players.find((p) => p.id === room.wager?.playerId) ??
     room.players.find((p) => p.connected) ??
     room.players[0];
   const [selectedPlayerId, setSelectedPlayerId] = useState(
-    defaultPlayer?.id ?? "",
+    defaultPlayer?.id ?? ""
   );
   const [wagerInput, setWagerInput] = useState("");
   const [locking, setLocking] = useState(false);
@@ -1183,8 +1216,24 @@ function WagerSetupModal({
     return () => dialog.current?.close();
   }, []);
 
+  const selectedQuestion =
+    room.questions.find((q) => q.id === selectedQuestionId) ?? defaultQuestion;
+  const selectedCategory = selectedQuestion
+    ? room.categories.find((c) => c.id === selectedQuestion.categoryId)
+    : null;
+
   const selectedPlayer =
     room.players.find((p) => p.id === selectedPlayerId) ?? defaultPlayer;
+
+  const handleQuestionChange = async (newQId: string) => {
+    setSelectedQuestionId(newQId);
+    setError("");
+    try {
+      await onQuestionChange(newQId);
+    } catch {
+      // ignore
+    }
+  };
 
   const handlePlayerChange = async (newId: string) => {
     setSelectedPlayerId(newId);
@@ -1199,6 +1248,10 @@ function WagerSetupModal({
   const handleLock = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (!selectedQuestion) {
+      setError("Please select a question to assign.");
+      return;
+    }
     if (!selectedPlayer) {
       setError("Please select a participant.");
       return;
@@ -1219,7 +1272,7 @@ function WagerSetupModal({
     }
     setLocking(true);
     try {
-      await onLock(selectedPlayer.id, num);
+      await onLock(selectedPlayer.id, num, selectedQuestion.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to lock wager.");
       setLocking(false);
@@ -1240,13 +1293,64 @@ function WagerSetupModal({
         <div>
           <h2 id="wager-modal-title">JBTI RB7A Setup</h2>
           <p className="muted">
-            A random unused question is reserved. Enter the participant's approved wager.
+            Assign a specific question and enter the participant's approved wager.
           </p>
         </div>
-        <Pill tone="amber">QUESTION RESERVED</Pill>
+        <Pill tone="amber">ASSIGN QUESTION</Pill>
       </div>
 
       <form onSubmit={handleLock}>
+        <label>
+          Assigned Question
+          <select
+            value={selectedQuestionId}
+            onChange={(e) => void handleQuestionChange(e.target.value)}
+            disabled={locking}
+          >
+            {room.categories.map((c) => {
+              const catQs = unplayedQuestions.filter(
+                (q) => q.categoryId === c.id
+              );
+              if (catQs.length === 0) return null;
+              return (
+                <optgroup key={c.id} label={c.name}>
+                  {catQs.map((q) => (
+                    <option key={q.id} value={q.id}>
+                      {q.value} pts —{" "}
+                      {q.text
+                        ? q.text.length > 50
+                          ? q.text.slice(0, 50) + "…"
+                          : q.text
+                        : `Question (${q.value} pts)`}
+                    </option>
+                  ))}
+                </optgroup>
+              );
+            })}
+          </select>
+        </label>
+
+        {selectedQuestion && (
+          <div className="wager-question-preview">
+            <div className="wager-question-preview-meta">
+              <Pill tone="lavender">
+                {selectedCategory?.name ?? "Category"}
+              </Pill>
+              <Pill tone="mint">
+                {score(selectedQuestion.value)} PTS ORIGINAL
+              </Pill>
+            </div>
+            <p className="wager-question-preview-text">
+              <strong>Clue:</strong> {selectedQuestion.text}
+            </p>
+            {selectedQuestion.answer && (
+              <p className="wager-question-preview-answer">
+                <strong>Answer:</strong> {selectedQuestion.answer}
+              </p>
+            )}
+          </div>
+        )}
+
         <label>
           Participant
           <select
@@ -1256,7 +1360,8 @@ function WagerSetupModal({
           >
             {room.players.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} {p.connected ? "(Connected)" : "(Offline)"} · {score(p.score)} pts
+                {p.name} {p.connected ? "(Connected)" : "(Offline)"} ·{" "}
+                {score(p.score)} pts
               </option>
             ))}
           </select>
@@ -1288,7 +1393,8 @@ function WagerSetupModal({
             required
           />
           <small className="muted">
-            Positive whole numbers only. Correct adds this amount; wrong subtracts it.
+            Positive whole numbers only. Correct adds this amount; wrong subtracts
+            it.
           </small>
         </label>
 

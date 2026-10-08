@@ -73,24 +73,27 @@ Check(importedView.Questions.Length == 2 && importedView.Questions[0].Text == "I
 
 // --- JBTI RB7A (Wager round) tests ---
 Act("start"); // Move to board
-// 1. Initiate wager round
-store.Act(room, "host", new("wager_init"));
+// 1. Initiate wager round assigning a specific question (e.g. q1-0)
+store.Act(room, "host", new("wager_init", QuestionId: "q1-0"));
 var wagerSetupView = store.View(room, false);
 Check(room.Phase == "wager_setup", "wager_init transitions to wager_setup");
 Check(wagerSetupView.Wager is not null && !wagerSetupView.Wager.Locked, "wager state exists and is unlocked in setup");
-Check(room.QuestionId != null, "wager_init selects and reserves a question");
-var reservedQId = room.QuestionId!;
-Check(wagerSetupView.Questions.Single(q => q.Id == reservedQId).Text == null, "reserved question text is hidden from players during wager_setup");
-Check(store.View(room, true).Questions.Single(q => q.Id == reservedQId).Text == null, "reserved question text is hidden from host during wager_setup");
+Check(room.QuestionId == "q1-0", "wager_init assigns the specified question");
+Check(wagerSetupView.Questions.Single(q => q.Id == "q1-0").Text == null, "reserved question text is hidden from players during wager_setup");
+Check(store.View(room, true).Questions.Single(q => q.Id == "q1-0").Text != null, "assigned question text is visible to host during wager_setup");
 
-// 2. Cancellation releases the reserved question without marking it played
+// 2. Host reassigns the question to another specific question during setup
+store.Act(room, "host", new("wager_question", QuestionId: "q0-0"));
+Check(room.QuestionId == "q0-0", "wager_question reassigns the specific question");
+
+// 3. Cancellation releases the reserved question without marking it played
 store.Act(room, "host", new("wager_cancel"));
 Check(room.Phase == "board" && room.QuestionId == null && room.Wager == null, "wager_cancel returns to board and clears wager");
-Check(!store.View(room, false).Questions.Single(q => q.Id == reservedQId).Played, "cancelled question remains unplayed");
+Check(!store.View(room, false).Questions.Single(q => q.Id == "q0-0").Played, "cancelled question remains unplayed");
 
-// 3. Re-initiate and test input validation
-store.Act(room, "host", new("wager_init", PlayerId: a.PlayerId));
-var activeReservedQId = room.QuestionId!;
+// 4. Re-initiate and test input validation
+store.Act(room, "host", new("wager_init", QuestionId: "q0-0", PlayerId: a.PlayerId));
+var activeReservedQId = "q0-0";
 Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: a.PlayerId, WagerAmount: 0)), "rejects 0 wager");
 Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: a.PlayerId, WagerAmount: -50)), "rejects negative wager");
 Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: "nonexistent", WagerAmount: 500)), "rejects invalid player id");
@@ -100,8 +103,8 @@ Reject(() => store.Act(room, "host", new("wager_lock", PlayerId: a.PlayerId)), "
 store.Act(room, "host", new("wager_player", PlayerId: b.PlayerId));
 Check(store.View(room, false).Wager!.PlayerId == b.PlayerId, "wager_player updates selected participant");
 
-// Lock wager with valid amount (e.g. 750)
-store.Act(room, "host", new("wager_lock", PlayerId: b.PlayerId, WagerAmount: 750));
+// Lock wager with valid amount (e.g. 750) and assigned question
+store.Act(room, "host", new("wager_lock", PlayerId: b.PlayerId, WagerAmount: 750, QuestionId: "q0-0"));
 var lockedView = store.View(room, false);
 Check(room.Phase == "reading", "wager_lock transitions to reading");
 Check(lockedView.Wager is not null && lockedView.Wager.Locked && lockedView.Wager.Amount == 750, "wager is locked with specified amount");

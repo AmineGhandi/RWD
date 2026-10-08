@@ -97,8 +97,8 @@ public class GameStore
             );
             return new(room.Code, DateTimeOffset.UtcNow, room.Revision, room.Phase, room.QuestionId, room.RoundId, room.WinnerId, room.AttemptId, room.FailedIds.ToArray(), room.Deadline,
                 room.Categories.ToArray(), room.Questions.Select(q => new QuestionView(q.Id, q.CategoryId, q.Value, q.Played,
-                    room.Phase == "wager_setup" ? null : (host || q.Id == room.QuestionId ? q.Text : null),
-                    room.Phase == "wager_setup" ? null : (host || (q.Id == room.QuestionId && room.Phase == "revealed") ? q.Answer : null))).ToArray(),
+                    host ? q.Text : (room.Phase == "wager_setup" ? null : (q.Id == room.QuestionId ? q.Text : null)),
+                    host ? q.Answer : (room.Phase != "wager_setup" && q.Id == room.QuestionId && room.Phase == "revealed" ? q.Answer : null))).ToArray(),
                 room.Players.Select(p => new PlayerView(p.Id, p.Name, p.Score, room.Connections.Values.Any(c => c.PlayerId == p.Id))).ToArray(), host, wagerView);
         }
     }
@@ -135,11 +135,13 @@ public class GameStore
                     Require(!q.Played, "That question has already been played.");
                     room.QuestionId = q.Id; room.RoundId = Token(); room.Phase = "reading"; room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.LastJudgement = null; room.Deadline = null; room.Wager = null; break;
                 case "wager_init":
-                    Require(room.Phase == "board", "Return to the board before starting a wager round.");
+                    Require(room.Phase is "board" or "reading", "Return to the board or question reading to start a wager round.");
                     Require(room.Players.Count > 0, "Wait for players to join before starting a wager round.");
                     var unplayed = room.Questions.Where(q => !q.Played).ToList();
                     Require(unplayed.Count > 0, "No unused questions remaining on the board.");
-                    var chosenQ = unplayed[RandomNumberGenerator.GetInt32(unplayed.Count)];
+                    var chosenQ = (action.QuestionId != null ? room.Questions.FirstOrDefault(q => q.Id == action.QuestionId && !q.Played) : null)
+                        ?? (room.Phase == "reading" && room.QuestionId != null ? room.Questions.FirstOrDefault(q => q.Id == room.QuestionId && !q.Played) : null)
+                        ?? unplayed[0];
                     var targetPlayer = (action.PlayerId != null ? room.Players.FirstOrDefault(p => p.Id == action.PlayerId) : null)
                         ?? room.Players.FirstOrDefault(p => room.Connections.Values.Any(c => c.PlayerId == p.Id))
                         ?? room.Players[0];
@@ -148,6 +150,12 @@ public class GameStore
                     room.Phase = "wager_setup";
                     room.Wager = new WagerState(targetPlayer.Id, 0, false);
                     room.WinnerId = null; room.AttemptId = null; room.FailedIds.Clear(); room.LastJudgement = null; room.Deadline = null; break;
+                case "wager_question":
+                    Require(room.Phase == "wager_setup", "Question can only be assigned during wager setup.");
+                    Require(!string.IsNullOrEmpty(action.QuestionId), "Choose a question.");
+                    var qToAssign = room.Questions.FirstOrDefault(q => q.Id == action.QuestionId && !q.Played)
+                        ?? throw new GameException("Question not found or already played.");
+                    room.QuestionId = qToAssign.Id; break;
                 case "wager_player":
                     Require(room.Phase == "wager_setup", "Wager participant can only be changed during setup.");
                     Require(!string.IsNullOrEmpty(action.PlayerId) && room.Players.Any(p => p.Id == action.PlayerId), "Player not found.");
@@ -159,6 +167,12 @@ public class GameStore
                     Require(room.Phase == "wager_setup", "No active wager setup to lock.");
                     Require(!string.IsNullOrEmpty(action.PlayerId) && room.Players.Any(p => p.Id == action.PlayerId), "Choose a valid participant.");
                     if (action.WagerAmount is not { } wagerAmount || wagerAmount <= 0) throw new GameException("Wager must be a positive whole number.");
+                    if (!string.IsNullOrEmpty(action.QuestionId)) {
+                        var qToLock = room.Questions.FirstOrDefault(q => q.Id == action.QuestionId && !q.Played)
+                            ?? throw new GameException("Question not found or already played.");
+                        room.QuestionId = qToLock.Id;
+                    }
+                    Require(room.QuestionId != null, "No question assigned.");
                     var participant = room.Players.Single(p => p.Id == action.PlayerId);
                     room.Wager!.PlayerId = participant.Id;
                     room.Wager.Amount = wagerAmount;
